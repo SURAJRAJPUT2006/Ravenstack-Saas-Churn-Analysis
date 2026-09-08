@@ -1,24 +1,45 @@
 -- MRR WaterFall
-WITH mrr_data AS
-(
-SELECT 
-  strftime(movement_date, '%Y-%m') AS month,
-  SUM(CASE WHEN movement_type = 'New' THEN mrr_change ELSE 0 END ) AS New,
-  SUM(CASE WHEN movement_type = 'Expansion' THEN mrr_change ELSE 0 END) AS Expansion ,
-  SUM(CASE WHEN movement_type = 'Contraction' THEN mrr_change ELSE 0 END) AS Contraction ,
-  SUM(CASE WHEN movement_type = 'Churn' THEN mrr_change ELSE 0 END) AS Churn,
+WITH monthly AS (
+SELECT
+  DATE_TRUNC('month', movement_date) AS month_date,
+  STRFTIME(movement_date, '%Y-%m') AS month,
+  SUM(CASE WHEN movement_type = 'New' THEN mrr_change ELSE 0 END) AS new_mrr,
+  SUM(CASE WHEN movement_type = 'Expansion' THEN mrr_change ELSE 0 END) AS expansion_mrr,
+  SUM(CASE WHEN movement_type = 'Contraction' THEN mrr_change ELSE 0 END) AS contraction_mrr,
+  SUM(CASE WHEN movement_type = 'Churn' THEN mrr_change ELSE 0 END) AS churn_mrr
 FROM mrr_movements
-GROUP BY month
-ORDER BY month
+GROUP BY 1, 2
+),
+
+mrr_calc AS (
+SELECT
+  month_date,
+  month,
+  new_mrr,
+  expansion_mrr,
+  contraction_mrr,
+  churn_mrr,
+  (new_mrr + expansion_mrr + contraction_mrr + churn_mrr) AS net_new_mrr,
+  SUM(new_mrr + expansion_mrr + contraction_mrr + churn_mrr)
+            OVER (ORDER BY month_date) AS ending_mrr
+FROM monthly
 )
-SELECT month , New, Expansion , Contraction , Churn , (New + Expansion + Contraction + Churn) AS Net_New_Mrr
-FROM mrr_data
-ORDER BY Net_New_Mrr
+
+SELECT
+  month,
+  COALESCE(LAG(ending_mrr) OVER (ORDER BY month_date), 0) AS starting_mrr,
+  new_mrr,
+  expansion_mrr,
+  contraction_mrr,
+  churn_mrr,
+  net_new_mrr,
+  ending_mrr
+FROM mrr_calc
+ORDER BY month_date;
 
 /*
-MRR Waterfall exposed a critical turning point for Velocity SaaS: The Leaky Bucket (From starting mrr of $781k in 2022 jan
-to net new mrr of $852 in 2024 jan)
-
-In January 2024, despite acquiring $55k in New MRR, churn wiped out $71k, leaving net growth at a staggering low of just $852. 
-The data shows that we can't just 'market' our way out of this—we have to fix retention.
+New MRR declined nearly 90% from its May 2022 peak ($545K) to January 2024 ($56K). 
+At the same time, churn remained elevated enough to reduce Net New MRR to just $852, 
+showing that acquisition weakness and retention pressure are now compounding.
 */
+
